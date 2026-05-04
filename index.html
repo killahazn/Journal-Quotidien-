@@ -1,2 +1,586 @@
-1
-🌅 
+
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Planificateur Middlemen</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+body{background:#0f1117;color:#e8e8e8;font-family:'Segoe UI',sans-serif;max-width:480px;margin:0 auto;padding-bottom:80px;min-height:100vh;}
+input,textarea,select{font-family:inherit;font-size:16px;}
+input:focus,textarea:focus{outline:2px solid #7c3aed;}
+button{font-family:inherit;cursor:pointer;}
+.hdr{background:linear-gradient(135deg,#1a1a2e,#16213e);padding:14px 14px 10px;border-bottom:1px solid #2a2a3e;}
+.tabs{display:flex;background:#0f1117;border-bottom:1px solid #1e1e30;position:sticky;top:0;z-index:10;}
+.tab{flex:1;padding:10px 2px;border:none;background:transparent;color:#555;font-size:10px;cursor:pointer;border-bottom:2px solid transparent;}
+.tab.active{color:#a78bfa;border-bottom:2px solid #7c3aed;font-weight:700;}
+.content{padding:12px;}
+.card{background:#141420;border:1px solid #1e1e30;border-radius:12px;padding:14px;margin-bottom:12px;}
+.card-green{background:linear-gradient(135deg,#1a2a1a,#1e3a1e);border:1px solid #2d4a2d;}
+.card-purple{background:linear-gradient(135deg,#1a1a2e,#2a1a3e);border:1px solid #3a2a5e;}
+.card-blue{background:linear-gradient(135deg,#1a2a2a,#1e3a3a);border:1px solid #2d4a4a;}
+.card-red{background:linear-gradient(135deg,#1a1a2e,#2a1a1a);border:1px solid #4a1a1a;}
+.block{border-radius:12px;border:1px solid #1e1e30;background:#141420;margin-bottom:10px;overflow:hidden;}
+.block-hdr{padding:11px 14px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;}
+.block-body{padding:0 14px 14px;border-top:1px solid #1e1e30;}
+.ifield{width:100%;background:#1e1e30;border:1px solid #3a3a5e;border-radius:8px;color:#e8e8e8;font-size:16px;padding:10px 12px;outline:none;}
+.ifield:focus{border-color:#7c3aed;}
+.checkbox{width:22px;height:22px;border-radius:6px;border:2px solid #333;background:transparent;display:flex;align-items:center;justify-content:center;flex-shrink:0;cursor:pointer;transition:all .2s;}
+.checkbox.done{background:#6ab04c;border-color:#6ab04c;}
+.pill{flex:1;padding:8px 4px;border-radius:7px;border:1px solid #2a2a4e;background:transparent;color:#555;font-size:11px;cursor:pointer;}
+.pill.active-high{border-color:#e74c3c;background:#e74c3c44;color:#e74c3c;font-weight:700;}
+.pill.active-medium{border-color:#e67e22;background:#e67e2244;color:#e67e22;font-weight:700;}
+.pill.active-low{border-color:#27ae60;background:#27ae6044;color:#27ae60;font-weight:700;}
+.prog-bar{background:#1e1e30;border-radius:6px;height:5px;overflow:hidden;}
+.prog-fill{height:100%;background:linear-gradient(90deg,#7c3aed,#a78bfa);transition:width .5s;}
+.bottom-bar{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:480px;background:#0f1117;border-top:1px solid #1e1e30;padding:8px 14px;display:flex;justify-content:space-between;align-items:center;}
+.save-dot{width:8px;height:8px;border-radius:50%;background:#6ab04c;display:inline-block;margin-left:6px;}
+.dict-wrap{position:relative;width:100%;}
+.dict-wrap>.ifield{padding-right:44px;}
+.dict-btn{position:absolute;right:7px;top:7px;width:30px;height:30px;border-radius:8px;border:1px solid #3a3a5e;background:#1a1a2e;color:#a78bfa;font-size:15px;display:flex;align-items:center;justify-content:center;z-index:3;}
+.dict-btn.on{background:#7c3aed;color:#fff;border-color:#a78bfa;animation:pulseMic 1s infinite;}
+@keyframes pulseMic{0%,100%{transform:scale(1);}50%{transform:scale(1.08);}}
+.spin{width:40px;height:40px;border:3px solid #7c3aed;border-top-color:transparent;border-radius:50%;animation:spin 1s linear infinite;margin:auto;}
+@keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+
+<div id="app">
+  <div style="min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;">
+    <div class="spin"></div>
+    <div style="color:#888;font-size:13px;">Chargement…</div>
+  </div>
+</div>
+
+<script>
+// ─── Constants ────────────────────────────────────────────────────────────
+const ALL_DAYS=["Dimanche","Lundi","Mardi","Mercredi","Jeudi","Vendredi","Samedi"];
+const OFF_DAYS=["Dimanche","Lundi"];
+const END_TIMES={Mardi:"18:00",Mercredi:"18:00",Jeudi:"20:00",Vendredi:"20:00",Samedi:"17:00",Dimanche:"",Lundi:""};
+const WORK_START="09:45";
+const MORNING_TPL=[
+  {id:"m1",label:"Étirements",dur:10},{id:"m2",label:"Méditation",dur:10},
+  {id:"m3",label:"Entraînement",dur:20},{id:"m4",label:"Douche",dur:10},
+  {id:"m5",label:"Préparation",dur:35},{id:"m6",label:"Trajet vers le travail",dur:45}
+];
+const OFF_TPL=MORNING_TPL.slice(0,5);
+const MORNING_TOTAL=MORNING_TPL.reduce((s,r)=>s+r.dur,0);
+const OFF_TOTAL=OFF_TPL.reduce((s,r)=>s+r.dur,0);
+const OPENING_TPL=[
+  {id:"o1",label:"Vérifier le showroom",dur:10},{id:"o2",label:"Écrire les rendez-vous du jour",dur:10},
+  {id:"o3",label:"Voir les priorités avec Boris",dur:15},{id:"o4",label:"Vérifier les emails",dur:15},
+  {id:"o5",label:"Vérifier les messages",dur:10}
+];
+const NETWORK_DAYS=["Jeudi","Vendredi"];
+const STORE_KEY="mdm_planner_v15";
+const TYPE_COL={opening:"#1a6b5c",work:"#1a3a5c",network:"#4a1a6b",break:"#2d6b3a",closing:"#6b1a1a",priorities:"#8b6914",offblock:"#2a3a4a"};
+const P_COL={high:"#e74c3c",medium:"#e67e22",low:"#27ae60"};
+
+// ─── Helpers ──────────────────────────────────────────────────────────────
+const toMins=t=>{const[h,m]=t.split(":").map(Number);return h*60+m;};
+const fromMins=m=>`${String(Math.floor(m/60)).padStart(2,"0")}:${String(m%60).padStart(2,"0")}`;
+const dateKey=d=>{const x=new Date(d);x.setHours(0,0,0,0);return `${x.getFullYear()}-${String(x.getMonth()+1).padStart(2,"0")}-${String(x.getDate()).padStart(2,"0")}`;};
+const parseKey=k=>{const [yy,mm,dd]=String(k).split("-").map(Number);return new Date(yy,(mm||1)-1,dd||1);};
+const dayName=d=>ALL_DAYS[new Date(d).getDay()];
+const fmtD=d=>{const x=new Date(d);return`${String(x.getDate()).padStart(2,"0")}/${String(x.getMonth()+1).padStart(2,"0")}`;};
+const getMonday=d=>{const x=new Date(d);x.setHours(0,0,0,0);const day=x.getDay();x.setDate(x.getDate()-((day===0?7:day)-1));return x;};
+const weekOf=m=>Array.from({length:7},(_,i)=>{const d=new Date(m);d.setDate(d.getDate()+i);return d;});
+const fmtCAD=v=>(parseFloat(v)||0).toLocaleString("fr-CA",{style:"currency",currency:"CAD"});
+const esc=s=>String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+
+// ─── Storage ──────────────────────────────────────────────────────────────
+let DB={};
+let saveStamp=0;
+function safeParse(raw){try{return raw?JSON.parse(raw):null;}catch{return null;}}
+function loadDB(){
+  const primary=safeParse(localStorage.getItem(STORE_KEY));
+  const backup=safeParse(sessionStorage.getItem(STORE_KEY+"_backup"));
+  DB=primary||backup||{};
+}
+function saveDB(){
+  try{
+    saveStamp=Date.now();
+    const raw=JSON.stringify(DB);
+    localStorage.setItem(STORE_KEY,raw);
+    sessionStorage.setItem(STORE_KEY+"_backup",raw);
+  }catch(e){console.warn("Sauvegarde impossible",e);}
+}
+function forceSave(){saveDB();}
+window.addEventListener("beforeunload",forceSave);
+document.addEventListener("visibilitychange",()=>{if(document.hidden)forceSave();});
+
+// ─── Schedule builders ────────────────────────────────────────────────────
+function buildWork(dl){
+  let c=toMins(WORK_START);const end=toMins(END_TIMES[dl]);const B=[];
+  const od=OPENING_TPL.reduce((s,t)=>s+t.dur,0);
+  B.push({id:"opening",type:"opening",label:"Ouverture de journée",start:c,end:c+od,dur:od,tasks:OPENING_TPL.map(t=>({...t,done:false})),status:"pending"});c+=od;
+  B.push({id:"priorities",type:"priorities",label:"Top 3 Priorités",start:c,end:c+60,dur:60,tasks:[],status:"pending"});c+=60;
+  B.push({id:"work1",type:"work",label:"Bloc de travail — Matin",start:c,end:c+90,dur:90,tasks:[{id:"w1a",label:"Suivis clients",dur:45,done:false},{id:"w1b",label:"Tâches administratives",dur:45,done:false}],status:"pending"});c+=90;
+  B.push({id:"lunch",type:"break",label:"Pause déjeuner",start:c,end:c+45,dur:45,tasks:[],status:"pending"});c+=45;
+  B.push({id:"work2",type:"work",label:"Bloc de travail — Après-midi",start:c,end:c+90,dur:90,tasks:[{id:"w2a",label:"Emails & messages",dur:30,done:false},{id:"w2b",label:"Rendez-vous / consultations",dur:60,done:false}],status:"pending"});c+=90;
+  if(NETWORK_DAYS.includes(dl)){B.push({id:"network",type:"network",label:"🚀 Réseautage & Développement",start:c,end:c+90,dur:90,tasks:[{id:"n1",label:"Réseautage B2B",dur:30,done:false},{id:"n2",label:"Développement de marque",dur:30,done:false},{id:"n3",label:"Relations d'affaires",dur:30,done:false}],status:"pending"});c+=90;}
+  const cs=end-30;
+  if(c<cs)B.push({id:"buffer",type:"work",label:"Bloc flexible / imprévus",start:c,end:cs,dur:cs-c,tasks:[{id:"b1",label:"Tâches secondaires",dur:cs-c,done:false}],status:"pending"});
+  B.push({id:"closing",type:"closing",label:"Clôture de journée",start:cs,end,dur:30,tasks:[],status:"pending"});
+  return B;
+}
+function freshDay(dateObj){
+  const dl=dayName(dateObj),off=OFF_DAYS.includes(dl);
+  return{
+    routine:(off?OFF_TPL:MORNING_TPL).map(r=>({...r,done:false})),
+    blocks:off?[{id:"offblock",type:"offblock",label:"Bloc suivi (au besoin)",start:null,end:null,dur:null,tasks:[{id:"f1",label:"",dur:0,done:false},{id:"f2",label:"",dur:0,done:false},{id:"f3",label:"",dur:0,done:false}],status:"pending"}]:buildWork(dl),
+    priorities:[{id:1,title:"",cat:"",level:"high",time:"30"},{id:2,title:"",cat:"",level:"medium",time:"30"},{id:3,title:"",cat:"",level:"low",time:"30"}],
+    recap:{vente:"",tip:"",pending:"",followups:"",highlights:"",tomorrow:""}
+  };
+}
+function getDay(dk,dateObj){if(!DB[dk])DB[dk]=freshDay(dateObj);return DB[dk];}
+function saveDay(dk,dateObj,data){DB[dk]=data;saveDB();}
+
+// ─── State ────────────────────────────────────────────────────────────────
+let todayObj=new Date();todayObj.setHours(0,0,0,0);
+let selDate=new Date(todayObj);
+let weekMon=getMonday(todayObj);
+let activeBlk=null;
+let curTab=0;
+
+// ─── Render ───────────────────────────────────────────────────────────────
+function render(){
+  const dk=dateKey(selDate),dl=dayName(selDate);
+  const isOff=OFF_DAYS.includes(dl),isToday=dateKey(todayObj)===dk;
+  const day=getDay(dk,selDate);
+  const{routine,blocks,priorities,recap}=day;
+  const now=new Date();
+  const nowM=now.getHours()*60+now.getMinutes();
+  const rDone=routine.filter(r=>r.done).length;
+  const bDone=blocks.filter(b=>b.status==="done").length;
+  const prog=Math.round(((rDone/routine.length)*0.2+(blocks.length?(bDone/blocks.length)*0.8:0))*100);
+  const curIdx=isOff?-1:blocks.findIndex(b=>b.start!=null&&nowM>=b.start&&nowM<b.end);
+  const rStart=isOff?fromMins(480):fromMins(toMins(WORK_START)-MORNING_TOTAL);
+  const wDates=weekOf(weekMon);
+
+  // Sales cumuls
+  const y=selDate.getFullYear(),mo=selDate.getMonth();
+  let mV=0,mT=0,yV=0,yT=0;
+  Object.entries(DB).forEach(([k,v])=>{
+    const d=parseKey(k);const dv=parseFloat(v.recap?.vente||0)||0;const dt=parseFloat(v.recap?.tip||0)||0;
+    if(d.getFullYear()===y){yV+=dv;yT+=dt;if(d.getMonth()===mo){mV+=dv;mT+=dt;}}
+  });
+  const mName=selDate.toLocaleDateString("fr-CA",{month:"long",year:"numeric"});
+
+  const recapFields=[
+    {key:"pending",emoji:"⏳",label:"En attente"},
+    {key:"followups",emoji:"🔁",label:"Suivis"},
+    {key:"highlights",emoji:"💡",label:"Points importants"},
+    {key:"tomorrow",emoji:"🎯",label:"Demain"}
+  ];
+  const waMsg=[
+    `📋 *Récap du ${dl} ${selDate.toLocaleDateString("fr-CA")}*`,"",
+    recap.vente?`💰 *Vente brute :* ${fmtCAD(recap.vente)}`:null,
+    recap.tip?`🎁 *Pourboires :* ${fmtCAD(recap.tip)}`:null,
+    ...recapFields.filter(f=>recap[f.key]?.trim()).map(f=>`${f.emoji} *${f.label} :*\n${recap[f.key].trim()}`)
+  ].filter(Boolean).join("\n\n");
+
+  // ── Blocks HTML ──
+  function blockHtml(b,i){
+    const open=activeBlk===b.id;
+    const statusDot=b.status==="done"?"#6ab04c":b.status==="active"?"#e67e22":"#333";
+    let bodyHtml="";
+    if(open){
+      if(b.type==="priorities"){
+        bodyHtml=priorities.map((p,pi)=>`
+          <div style="margin-bottom:12px;background:#0f1117;border-radius:10px;padding:12px;border:1px solid ${P_COL[p.level]}55;">
+            <div style="font-size:10px;color:${P_COL[p.level]};font-weight:700;margin-bottom:8px;letter-spacing:1px;">PRIORITÉ ${pi+1}</div>
+            <div style="font-size:11px;color:#666;margin-bottom:4px;">Titre</div>
+            <input class="ifield" style="margin-bottom:10px;" value="${esc(p.title)}" oninput="setPrio(${p.id},'title',this.value)" placeholder="Ex: Appeler client...">
+            <div style="display:flex;gap:8px;margin-bottom:10px;">
+              <div style="flex:1;"><div style="font-size:11px;color:#666;margin-bottom:4px;">Catégorie</div>
+              <input class="ifield" value="${esc(p.cat)}" oninput="setPrio(${p.id},'cat',this.value)" placeholder="Ex: Middlemen..."></div>
+              <div><div style="font-size:11px;color:#666;margin-bottom:4px;">Durée</div>
+              <div style="display:flex;align-items:center;background:#1e1e30;border:1px solid #3a3a5e;border-radius:8px;overflow:hidden;height:44px;">
+                <button onclick="setPrio(${p.id},'time',String(Math.max(5,Number('${p.time}')-5)))" style="background:none;border:none;color:#a78bfa;font-size:20px;padding:0 10px;">−</button>
+                <span style="font-size:13px;color:#e8e8e8;min-width:38px;text-align:center;">${p.time}m</span>
+                <button onclick="setPrio(${p.id},'time',String(Number('${p.time}')+5))" style="background:none;border:none;color:#a78bfa;font-size:20px;padding:0 10px;">+</button>
+              </div></div>
+            </div>
+            <div style="display:flex;gap:6px;">
+              <button onclick="setPrio(${p.id},'level','high')" class="pill ${p.level==='high'?'active-high':''}">🔴 Urgent</button>
+              <button onclick="setPrio(${p.id},'level','medium')" class="pill ${p.level==='medium'?'active-medium':''}">🟠 Important</button>
+              <button onclick="setPrio(${p.id},'level','low')" class="pill ${p.level==='low'?'active-low':''}">🟢 Normal</button>
+            </div>
+          </div>`).join("");
+      } else if(b.type==="closing"){
+        bodyHtml=`<div style="padding-top:10px;font-size:11px;color:#a78bfa;margin-bottom:8px;">📤 Prépare ton récap dans l'onglet Clôture</div>
+          <button onclick="setTab(3)" style="background:#7c3aed;color:#fff;border:none;border-radius:8px;padding:8px 16px;font-size:12px;font-weight:600;">Aller à la clôture →</button>`;
+      } else if(b.type==="offblock"){
+        bodyHtml=b.tasks.map((t,ti)=>`
+          <div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid #1e1e30;">
+            <div class="checkbox ${t.done?'done':''}" onclick="toggleTask('${b.id}','${t.id}')">${t.done?'<span style="font-size:11px;color:#fff;">✓</span>':''}</div>
+            <input class="ifield" value="${esc(t.label)}" oninput="setTaskLabel('${b.id}','${t.id}',this.value)" placeholder="Suivi ${ti+1}..." style="margin-bottom:0;">
+          </div>`).join("")+`<button onclick="addOffTask()" style="margin-top:8px;background:transparent;border:1px dashed #2a2a4e;border-radius:6px;color:#888;font-size:12px;padding:7px;width:100%;">+ Ajouter un suivi</button>`;
+      } else {
+        const taskRows=b.tasks.map(t=>`
+          <div onclick="toggleTask('${b.id}','${t.id}')" style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #1e1e30;cursor:pointer;">
+            <div class="checkbox ${t.done?'done':''}">${t.done?'<span style="font-size:11px;color:#fff;">✓</span>':''}</div>
+            <span style="flex:1;font-size:14px;color:${t.done?"#555":"#ccc"};text-decoration:${t.done?"line-through":"none"};">${esc(t.label)}</span>
+            <span style="font-size:11px;color:#555;">${t.dur?t.dur+"m":""}</span>
+          </div>`).join("");
+        bodyHtml=taskRows+`
+          <div style="display:flex;gap:6px;margin-top:10px;">
+            <button onclick="setBlkStatus('${b.id}','active')" style="flex:1;padding:10px;background:#1a3d7a;color:#60a5fa;border:1px solid #1e4a8a;border-radius:7px;font-size:13px;font-weight:700;">▶ Démarrer</button>
+            <button onclick="setBlkStatus('${b.id}','done')" style="flex:1;padding:10px;background:#1a4a1a;color:#6ab04c;border:1px solid #2d6b2d;border-radius:7px;font-size:13px;font-weight:700;">✓ Terminé</button>
+          </div>`;
+      }
+    }
+    return`
+      <div class="block" style="border-color:${i===curIdx?"#7c3aed":"#1e1e30"};background:${i===curIdx?"#1a1a2e":"#141420"};">
+        <div class="block-hdr" onclick="toggleBlk('${b.id}')">
+          <div style="display:flex;align-items:center;gap:10px;">
+            <div style="width:4px;height:32px;border-radius:2px;background:${TYPE_COL[b.type]||"#555"};"></div>
+            <div>
+              <div style="font-size:13px;font-weight:600;color:${b.status==="done"?"#555":"#e8e8e8"};text-decoration:${b.status==="done"?"line-through":"none"};">${esc(b.label)}</div>
+              <div style="font-size:11px;color:#666;">${b.start!=null?fromMins(b.start)+" – "+fromMins(b.end)+" · "+b.dur+" min":""}</div>
+            </div>
+          </div>
+          <div style="display:flex;gap:5px;align-items:center;">
+            ${b.type==="network"?'<span style="font-size:8px;background:#4a1a6b;color:#c084fc;padding:2px 5px;border-radius:4px;font-weight:700;">STRAT.</span>':""}
+            <div style="width:8px;height:8px;border-radius:50%;background:${statusDot};"></div>
+            <span style="font-size:12px;color:#555;">${open?"▲":"▼"}</span>
+          </div>
+        </div>
+        ${open?`<div class="block-body">${bodyHtml}</div>`:""}
+      </div>`;
+  }
+
+  // ── Tab content ──
+  let tabContent="";
+
+  if(curTab===0){
+    const offPrioHtml=isOff?`
+      <div class="card" style="border-color:#2a2a4e;margin-bottom:12px;">
+        <div style="font-size:12px;color:#a78bfa;font-weight:700;margin-bottom:4px;">🎯 Top 3 Priorités du jour</div>
+        ${priorities.map((p,pi)=>`
+          <div style="margin-bottom:12px;background:#0f1117;border-radius:10px;padding:12px;border:1px solid ${P_COL[p.level]}55;">
+            <div style="font-size:10px;color:${P_COL[p.level]};font-weight:700;margin-bottom:8px;">PRIORITÉ ${pi+1}</div>
+            <input class="ifield" style="margin-bottom:10px;" value="${esc(p.title)}" oninput="setPrio(${p.id},'title',this.value)" placeholder="Titre...">
+            <div style="display:flex;gap:8px;margin-bottom:10px;">
+              <input class="ifield" style="flex:1;" value="${esc(p.cat)}" oninput="setPrio(${p.id},'cat',this.value)" placeholder="Catégorie...">
+              <div style="display:flex;align-items:center;background:#1e1e30;border:1px solid #3a3a5e;border-radius:8px;overflow:hidden;height:44px;">
+                <button onclick="setPrio(${p.id},'time',String(Math.max(5,Number('${p.time}')-5)))" style="background:none;border:none;color:#a78bfa;font-size:20px;padding:0 10px;">−</button>
+                <span style="font-size:13px;color:#e8e8e8;min-width:38px;text-align:center;">${p.time}m</span>
+                <button onclick="setPrio(${p.id},'time',String(Number('${p.time}')+5))" style="background:none;border:none;color:#a78bfa;font-size:20px;padding:0 10px;">+</button>
+              </div>
+            </div>
+            <div style="display:flex;gap:6px;">
+              <button onclick="setPrio(${p.id},'level','high')" class="pill ${p.level==='high'?'active-high':''}">🔴 Urgent</button>
+              <button onclick="setPrio(${p.id},'level','medium')" class="pill ${p.level==='medium'?'active-medium':''}">🟠 Important</button>
+              <button onclick="setPrio(${p.id},'level','low')" class="pill ${p.level==='low'?'active-low':''}">🟢 Normal</button>
+            </div>
+          </div>`).join("")}
+      </div>`:""
+    tabContent=`
+      <div class="card card-green" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <div>
+          <div style="font-size:10px;color:#6ab04c;letter-spacing:2px;text-transform:uppercase;">${isOff?"Début routine":"Commencer la routine"}</div>
+          <div style="font-size:26px;font-weight:700;color:#6ab04c;">${rStart}</div>
+          <div style="font-size:11px;color:#888;">${isOff?`Durée : ${OFF_TOTAL} min`:`Arrivée à ${WORK_START}`}</div>
+        </div>
+        <div style="text-align:right;"><div style="font-size:10px;color:#888;">Durée</div><div style="font-size:18px;font-weight:600;color:#fff;">${isOff?OFF_TOTAL:MORNING_TOTAL} min</div></div>
+      </div>
+      ${curIdx>=0?`<div style="background:linear-gradient(135deg,#3d1a7a,#1a3d7a);border:1px solid #7c3aed;border-radius:12px;padding:12px 14px;margin-bottom:12px;">
+        <div style="font-size:10px;color:#a78bfa;letter-spacing:2px;text-transform:uppercase;margin-bottom:2px;">⚡ En ce moment</div>
+        <div style="font-size:15px;font-weight:700;">${esc(blocks[curIdx].label)}</div>
+        <div style="font-size:11px;color:#888;">${fromMins(blocks[curIdx].start)} → ${fromMins(blocks[curIdx].end)}</div>
+      </div>`:""}
+      ${offPrioHtml}
+      ${blocks.map((b,i)=>blockHtml(b,i)).join("")}`;
+  }
+
+  if(curTab===1){
+    const routineRows=routine.map((r,i)=>{
+      const sm=toMins(rStart)+routine.slice(0,i).reduce((s,x)=>s+x.dur,0);
+      return`<div onclick="toggleRoutine('${r.id}')" style="display:flex;align-items:center;gap:12px;padding:12px 14px;margin-bottom:8px;border-radius:10px;border:1px solid ${r.done?"#2d4a2d":"#1e1e30"};background:${r.done?"#141e14":"#141420"};cursor:pointer;">
+        <div class="checkbox ${r.done?'done':''}">${r.done?'<span style="font-size:12px;color:#fff;">✓</span>':''}</div>
+        <div style="flex:1;">
+          <div style="font-size:14px;font-weight:600;color:${r.done?"#555":"#e8e8e8"};text-decoration:${r.done?"line-through":"none"};">${esc(r.label)}</div>
+          <div style="font-size:11px;color:#666;">${fromMins(sm)} → ${fromMins(sm+r.dur)}</div>
+        </div>
+        <div style="font-size:12px;color:#888;font-weight:600;">${r.dur} min</div>
+      </div>`;
+    }).join("");
+    tabContent=`
+      <div class="card" style="margin-bottom:14px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+          <div><div style="font-size:11px;color:#888;">Heure de départ</div><div style="font-size:30px;font-weight:700;color:#6ab04c;">${rStart}</div></div>
+          <div style="text-align:right;"><div style="font-size:11px;color:#888;">${isOff?"Journée":"Arrivée"}</div><div style="font-size:20px;font-weight:700;color:#fff;">${isOff?"🌿":WORK_START}</div></div>
+        </div>
+        <div class="prog-bar"><div class="prog-fill" style="width:${(rDone/routine.length)*100}%;background:linear-gradient(90deg,#6ab04c,#a8e063);"></div></div>
+        <div style="font-size:11px;color:#888;margin-top:4px;">${rDone}/${routine.length} étapes complétées</div>
+      </div>
+      ${routineRows}`;
+  }
+
+  if(curTab===2){
+    const prioRows=priorities.map((p,i)=>`
+      <div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:${i<2?"1px solid #1e1e30":"none"};">
+        <div style="width:24px;height:24px;border-radius:50%;background:${P_COL[p.level]};display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#fff;flex-shrink:0;">${i+1}</div>
+        <div style="flex:1;">
+          <div style="font-size:13px;font-weight:600;color:${p.title?"#e8e8e8":"#444"};">${p.title?esc(p.title):`Priorité ${i+1} non définie`}</div>
+          ${(p.cat||p.time)?`<div style="font-size:11px;color:#888;">${esc(p.cat)}${p.time?" · "+p.time+" min":""}</div>`:""}
+        </div>
+        <span style="font-size:10px;background:${P_COL[p.level]}22;color:${P_COL[p.level]};padding:2px 6px;border-radius:4px;font-weight:700;">${p.level==="high"?"URGENT":p.level==="medium"?"IMPORT.":"NORMAL"}</span>
+      </div>`).join("");
+    const taskBlocks=blocks.filter(b=>b.tasks.length>0&&b.type!=="offblock").map(b=>`
+      <div style="margin-bottom:10px;background:#141420;border-radius:12px;border:1px solid #1e1e30;overflow:hidden;">
+        <div style="padding:10px 14px;background:#0f1117;display:flex;justify-content:space-between;">
+          <div style="font-size:12px;font-weight:700;color:#ccc;">${esc(b.label)}</div>
+          <div style="font-size:11px;color:#666;">${b.tasks.filter(t=>t.done).length}/${b.tasks.length}</div>
+        </div>
+        ${b.tasks.filter(t=>t.label).map(t=>`
+          <div onclick="toggleTask('${b.id}','${t.id}')" style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid #0f1117;cursor:pointer;">
+            <div class="checkbox ${t.done?'done':''}">${t.done?'<span style="font-size:10px;color:#fff;">✓</span>':''}</div>
+            <span style="flex:1;font-size:13px;color:${t.done?"#555":"#ccc"};text-decoration:${t.done?"line-through":"none"};">${esc(t.label)}</span>
+            <span style="font-size:11px;color:#555;">${t.dur?t.dur+"m":""}</span>
+          </div>`).join("")}
+      </div>`).join("");
+    tabContent=`
+      <div class="card" style="margin-bottom:14px;">
+        <div style="font-size:12px;color:#a78bfa;font-weight:700;letter-spacing:1px;text-transform:uppercase;margin-bottom:10px;">🎯 Top 3 Priorités</div>
+        ${prioRows}
+        <button onclick="setTab(0)" style="margin-top:10px;width:100%;padding:8px;background:#1a1a2e;color:#a78bfa;border:1px solid #2a2a4e;border-radius:8px;font-size:12px;">Modifier les priorités →</button>
+      </div>
+      ${taskBlocks}`;
+  }
+
+  if(curTab===3){
+    const recapInputs=recapFields.map(f=>`
+      <div style="margin-bottom:14px;">
+        <div style="font-size:13px;font-weight:600;color:#a78bfa;margin-bottom:6px;">${f.emoji} ${f.label}</div>
+        <textarea class="ifield" rows="3" oninput="setRecap('${f.key}',this.value)" style="resize:vertical;line-height:1.5;" placeholder="Taper ici...">${esc(recap[f.key]||"")}</textarea>
+        ${!recap[f.key]?.trim()?`<div style="font-size:10px;color:#555;margin-top:2px;">⚠️ Vide — ne sera pas inclus dans le WhatsApp</div>`:""}
+      </div>`).join("");
+    tabContent=`
+      <div class="card card-red" style="margin-bottom:14px;">
+        <div style="font-size:12px;color:#f87171;font-weight:700;letter-spacing:1px;text-transform:uppercase;margin-bottom:2px;">📋 Clôture — ${dl} ${selDate.toLocaleDateString("fr-CA")}</div>
+        <div style="font-size:11px;color:#6ab04c;">✅ Sauvegarde automatique activée</div>
+      </div>
+      <div class="card" style="border-color:#2a2a4e;margin-bottom:14px;">
+        <div style="font-size:12px;color:#f59e0b;font-weight:700;letter-spacing:1px;text-transform:uppercase;margin-bottom:12px;">💰 Ventes du jour</div>
+        <div style="display:flex;gap:10px;margin-bottom:14px;">
+          <div style="flex:1;"><div style="font-size:11px;color:#888;margin-bottom:5px;">Vente brute ($)</div>
+            <div style="display:flex;align-items:center;background:#0f1117;border:1px solid #3a3a5e;border-radius:8px;overflow:hidden;">
+              <span style="padding:0 10px;color:#f59e0b;font-size:16px;font-weight:700;">$</span>
+              <input type="number" inputmode="decimal" value="${esc(recap.vente||"")}" oninput="setRecap('vente',this.value)" placeholder="0.00" style="flex:1;background:transparent;border:none;color:#e8e8e8;font-size:18px;padding:10px 8px;outline:none;font-weight:700;">
+            </div>
+          </div>
+          <div style="flex:1;"><div style="font-size:11px;color:#888;margin-bottom:5px;">Pourboires ($)</div>
+            <div style="display:flex;align-items:center;background:#0f1117;border:1px solid #3a3a5e;border-radius:8px;overflow:hidden;">
+              <span style="padding:0 10px;color:#a78bfa;font-size:16px;font-weight:700;">$</span>
+              <input type="number" inputmode="decimal" value="${esc(recap.tip||"")}" oninput="setRecap('tip',this.value)" placeholder="0.00" style="flex:1;background:transparent;border:none;color:#e8e8e8;font-size:18px;padding:10px 8px;outline:none;font-weight:700;">
+            </div>
+          </div>
+        </div>
+        <div class="card" style="padding:10px;margin-bottom:10px;background:#0f1117;border-color:#2a2a4e;">
+          <div style="font-size:9px;color:#888;letter-spacing:1px;text-transform:uppercase;margin-bottom:6px;">Total du jour</div>
+          <div style="display:flex;justify-content:space-between;gap:8px;">
+            <div><div style="font-size:10px;color:#888;">Ventes</div><div style="font-size:16px;font-weight:700;color:#f59e0b;">${fmtCAD(recap.vente)}</div></div>
+            <div><div style="font-size:10px;color:#888;">Pourboires</div><div style="font-size:16px;font-weight:700;color:#a78bfa;">${fmtCAD(recap.tip)}</div></div>
+            <div><div style="font-size:10px;color:#888;">Total</div><div style="font-size:16px;font-weight:700;color:#fff;">${fmtCAD((parseFloat(recap.vente)||0)+(parseFloat(recap.tip)||0))}</div></div>
+          </div>
+        </div>
+        <div style="font-size:11px;color:#888;font-weight:600;margin-bottom:8px;letter-spacing:1px;text-transform:uppercase;">Cumuls</div>
+        <div style="display:flex;gap:8px;margin-bottom:8px;">
+          <div class="card card-green" style="flex:1;padding:10px;margin-bottom:0;">
+            <div style="font-size:9px;color:#6ab04c;letter-spacing:1px;text-transform:uppercase;margin-bottom:3px;">Ventes — ${mName}</div>
+            <div style="font-size:20px;font-weight:700;color:#6ab04c;">${fmtCAD(mV)}</div>
+          </div>
+          <div class="card card-purple" style="flex:1;padding:10px;margin-bottom:0;">
+            <div style="font-size:9px;color:#a78bfa;letter-spacing:1px;text-transform:uppercase;margin-bottom:3px;">Pourboires — ${mName}</div>
+            <div style="font-size:20px;font-weight:700;color:#a78bfa;">${fmtCAD(mT)}</div>
+          </div>
+        </div>
+        <div class="card card-blue" style="padding:12px;margin-bottom:0;">
+          <div style="font-size:9px;color:#60a5fa;letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;">Cumul annuel ${y}</div>
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <div><div style="font-size:10px;color:#888;margin-bottom:2px;">Ventes</div><div style="font-size:15px;font-weight:700;color:#60a5fa;">${fmtCAD(yV)}</div></div>
+            <div style="color:#444;font-size:18px;">+</div>
+            <div><div style="font-size:10px;color:#888;margin-bottom:2px;">Pourboires</div><div style="font-size:15px;font-weight:700;color:#a78bfa;">${fmtCAD(yT)}</div></div>
+            <div style="color:#444;font-size:18px;">=</div>
+            <div><div style="font-size:10px;color:#888;margin-bottom:2px;">Total</div><div style="font-size:15px;font-weight:700;color:#fff;">${fmtCAD(yV+yT)}</div></div>
+          </div>
+        </div>
+      </div>
+      ${recapInputs}
+      <div style="background:#0a0a12;border-radius:10px;padding:12px;margin-bottom:12px;border:1px solid #1e1e30;">
+        <div style="font-size:10px;color:#888;font-weight:700;margin-bottom:6px;letter-spacing:1px;">APERÇU WHATSAPP</div>
+        <pre style="font-size:12px;color:#ccc;white-space:pre-wrap;font-family:inherit;margin:0;line-height:1.6;user-select:text;-webkit-user-select:text;">${esc(waMsg)}</pre>
+      </div>
+      <button onclick="doCopy()" id="copyBtn" style="width:100%;padding:14px;background:linear-gradient(135deg,#25d366,#128c7e);color:#fff;border:none;border-radius:10px;font-size:14px;font-weight:700;">📱 Copier pour WhatsApp</button>`;
+  }
+
+  // ── Day pills ──
+  const pillsHtml=weekOf(weekMon).map((d,i)=>{
+    const dn=dayName(d),off2=OFF_DAYS.includes(dn);
+    const sel=dateKey(d)===dk,tod=dateKey(d)===dateKey(todayObj);
+    return`<button onclick="selectDay(${d.getTime()})" style="flex:1;padding:5px 1px;border-radius:8px;border:1px solid ${sel?"#7c3aed":tod?"#4a3a6a":"#1e1e30"};background:${sel?"#7c3aed":tod?"#1a1a2e":"#141420"};color:${sel?"#fff":tod?"#a78bfa":"#666"};font-size:9px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:1px;">
+      <span style="font-weight:${sel?700:400};">${dn.slice(0,3)}</span>
+      <span style="font-size:9px;">${fmtD(d)}</span>
+      ${off2?`<span style="font-size:8px;color:${sel?"#ddd":"#6ab04c"};">congé</span>`:""}
+    </button>`;
+  }).join("");
+
+  document.getElementById("app").innerHTML=`
+    <div class="hdr">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px;">
+        <div>
+          <div style="font-size:10px;color:#888;letter-spacing:2px;text-transform:uppercase;">Middlemen Canada</div>
+          <div style="font-size:15px;font-weight:700;color:#fff;">${dl} ${selDate.toLocaleDateString("fr-CA",{day:"numeric",month:"long",year:"numeric"})}</div>
+          ${isOff?`<div style="font-size:11px;color:#6ab04c;">🌿 Journée congé</div>`:""}
+          ${isToday?`<span style="font-size:10px;background:#7c3aed;color:#fff;padding:1px 7px;border-radius:4px;font-weight:700;">AUJOURD'HUI</span>`:""}
+        </div>
+        <div style="text-align:right;">
+          <div style="font-size:20px;font-weight:700;color:#a78bfa;">${now.toLocaleTimeString("fr-CA",{hour:"2-digit",minute:"2-digit"})}</div>
+          ${!isOff?`<div style="font-size:11px;color:#888;">Fin : ${END_TIMES[dl]}</div>`:""}
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">
+        <button onclick="prevWeek()" style="background:#1e1e30;border:1px solid #2a2a4e;border-radius:7px;color:#a78bfa;font-size:18px;padding:3px 12px;line-height:1;">‹</button>
+        <div style="flex:1;text-align:center;font-size:11px;color:#888;font-weight:600;">${fmtD(weekMon)} – ${fmtD(weekOf(weekMon)[6])}</div>
+        <button onclick="nextWeek()" style="background:#1e1e30;border:1px solid #2a2a4e;border-radius:7px;color:#a78bfa;font-size:18px;padding:3px 12px;line-height:1;">›</button>
+      </div>
+      <div style="display:flex;gap:3px;margin-bottom:8px;">${pillsHtml}</div>
+      <div class="prog-bar"><div class="prog-fill" style="width:${prog}%;"></div></div>
+      <div style="display:flex;justify-content:space-between;margin-top:3px;font-size:10px;color:#666;">
+        <span>Progression : ${prog}%</span>
+        <span>Routine ${rDone}/${routine.length} · Blocs ${bDone}/${blocks.length}</span>
+      </div>
+    </div>
+    <div class="tabs">
+      ${["🌅 Journée","📋 Routine","✅ Tâches","📝 Clôture"].map((t,i)=>`<button class="tab ${curTab===i?"active":""}" onclick="setTab(${i})">${t}</button>`).join("")}
+    </div>
+    <div class="content">${tabContent}</div>
+    <div class="bottom-bar">
+      <button onclick="prevWeek()" style="background:#1e1e30;border:1px solid #2a2a4e;border-radius:7px;color:#a78bfa;font-size:14px;padding:6px 14px;font-weight:700;">‹ Sem.</button>
+      <div style="text-align:center;">
+        <div style="font-size:10px;color:#555;">${isOff?"🌿 Congé":END_TIMES[dl]?"Fin : "+END_TIMES[dl]:""}</div>
+        <div style="font-size:11px;color:#a78bfa;font-weight:700;">${prog}% complété<span class="save-dot" title="Sauvegardé"></span></div>
+      </div>
+      <button onclick="nextWeek()" style="background:#1e1e30;border:1px solid #2a2a4e;border-radius:7px;color:#a78bfa;font-size:14px;padding:6px 14px;font-weight:700;">Sem. ›</button>
+    </div>`;
+  enhanceDictation();
+}
+
+// ─── Dictée vocale ────────────────────────────────────────────────────────
+function speechAPI(){return window.SpeechRecognition||window.webkitSpeechRecognition||null;}
+function enhanceDictation(){
+  const SR=speechAPI();
+  if(!SR)return;
+  document.querySelectorAll('input.ifield:not([type="number"]), textarea.ifield').forEach((el,idx)=>{
+    if(el.dataset.dictReady)return;
+    el.dataset.dictReady="1";
+    const parent=el.parentElement;
+    if(!parent)return;
+    if(getComputedStyle(parent).position==="static")parent.style.position="relative";
+    el.style.paddingRight="44px";
+    const btn=document.createElement("button");
+    btn.type="button";
+    btn.className="dict-btn";
+    btn.title="Dicter ce champ";
+    btn.textContent="🎙️";
+    btn.addEventListener("click",ev=>{ev.preventDefault();ev.stopPropagation();startDictation(el,btn);});
+    parent.appendChild(btn);
+  });
+}
+function startDictation(el,btn){
+  const SR=speechAPI();
+  if(!SR){alert("La dictée Web n'est pas disponible dans ce navigateur. Utilise le micro du clavier mobile.");return;}
+  const rec=new SR();
+  rec.lang="fr-CA";
+  rec.interimResults=false;
+  rec.continuous=false;
+  btn.classList.add("on");
+  btn.textContent="●";
+  rec.onresult=e=>{
+    const text=Array.from(e.results).map(r=>r[0]?.transcript||"").join(" ").trim();
+    if(text){
+      const sep=el.value.trim()?(el.tagName==="TEXTAREA"?"\n":" "):"";
+      el.value=el.value+sep+text;
+      el.dispatchEvent(new Event("input",{bubbles:true}));
+      forceSave();
+    }
+  };
+  rec.onerror=e=>{
+    console.warn("Erreur dictée",e.error);
+    if(e.error==="not-allowed")alert("Permission micro refusée. Autorise le micro pour ce site, ou utilise le micro du clavier du téléphone.");
+  };
+  rec.onend=()=>{btn.classList.remove("on");btn.textContent="🎙️";};
+  try{rec.start();}catch(e){console.warn(e);btn.classList.remove("on");btn.textContent="🎙️";}
+}
+
+// ─── Actions ──────────────────────────────────────────────────────────────
+function save(){const dk=dateKey(selDate);saveDB();}
+
+function toggleBlk(id){activeBlk=activeBlk===id?null:id;render();}
+function setTab(t){curTab=t;activeBlk=null;render();}
+function selectDay(ts){selDate=new Date(ts);activeBlk=null;curTab=0;render();}
+function prevWeek(){weekMon=new Date(weekMon);weekMon.setDate(weekMon.getDate()-7);render();}
+function nextWeek(){weekMon=new Date(weekMon);weekMon.setDate(weekMon.getDate()+7);render();}
+
+function toggleRoutine(id){
+  const dk=dateKey(selDate);const day=getDay(dk,selDate);
+  day.routine=day.routine.map(r=>r.id===id?{...r,done:!r.done}:r);
+  saveDB();render();
+}
+function toggleTask(bId,tId){
+  const dk=dateKey(selDate);const day=getDay(dk,selDate);
+  day.blocks=day.blocks.map(b=>{
+    if(b.id!==bId)return b;
+    const tasks=b.tasks.map(t=>t.id===tId?{...t,done:!t.done}:t);
+    return{...b,tasks,status:tasks.every(t=>t.done)?"done":tasks.some(t=>t.done)?"active":"pending"};
+  });
+  saveDB();render();
+}
+function setBlkStatus(id,status){
+  const dk=dateKey(selDate);const day=getDay(dk,selDate);
+  day.blocks=day.blocks.map(b=>b.id===id?{...b,status}:b);
+  activeBlk=null;saveDB();render();
+}
+function setTaskLabel(bId,tId,label){
+  const dk=dateKey(selDate);const day=getDay(dk,selDate);
+  day.blocks=day.blocks.map(b=>b.id===bId?{...b,tasks:b.tasks.map(t=>t.id===tId?{...t,label}:t)}:b);
+  saveDB();
+}
+function addOffTask(){
+  const dk=dateKey(selDate);const day=getDay(dk,selDate);
+  day.blocks=day.blocks.map(b=>b.id==="offblock"?{...b,tasks:[...b.tasks,{id:"f"+Date.now(),label:"",dur:0,done:false}]}:b);
+  saveDB();render();
+}
+function setPrio(id,field,val){
+  const dk=dateKey(selDate);const day=getDay(dk,selDate);
+  day.priorities=day.priorities.map(p=>p.id===id?{...p,[field]:val}:p);
+  saveDB();
+  if(field==="level"||field==="time")render();
+}
+function setRecap(field,val){
+  const dk=dateKey(selDate);const day=getDay(dk,selDate);
+  day.recap={...day.recap,[field]:val};
+  saveDB();
+  if(field==="vente"||field==="tip")render();
+}
+function doCopy(){
+  const btn=document.getElementById("copyBtn");
+  const pre=btn?.previousElementSibling?.querySelector("pre");
+  const txt=pre?.textContent||"";
+  const ok=()=>{if(btn){btn.textContent="✓ Copié !";btn.style.background="linear-gradient(135deg,#27ae60,#1e8449)";setTimeout(()=>{btn.textContent="📱 Copier pour WhatsApp";btn.style.background="linear-gradient(135deg,#25d366,#128c7e)";},2500);}};
+  if(navigator.clipboard?.writeText){navigator.clipboard.writeText(txt).then(ok).catch(()=>{try{const ta=document.createElement("textarea");ta.value=txt;ta.style.cssText="position:fixed;opacity:0;";document.body.appendChild(ta);ta.focus();ta.select();document.execCommand("copy");ok();document.body.removeChild(ta);}catch{alert("Appuie longuement sur l'aperçu.");}});}
+  else{try{const ta=document.createElement("textarea");ta.value=txt;ta.style.cssText="position:fixed;opacity:0;";document.body.appendChild(ta);ta.focus();ta.select();document.execCommand("copy");ok();document.body.removeChild(ta);}catch{alert("Appuie longuement sur l'aperçu.");}}
+}
+
+// ─── Init ─────────────────────────────────────────────────────────────────
+loadDB();
+render();
+setInterval(render,60000);
+</script>
+</body>
+</html>
