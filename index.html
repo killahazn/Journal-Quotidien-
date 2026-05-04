@@ -1,0 +1,601 @@
+import { useState, useEffect, useCallback, useRef } from "react";
+
+// ─── Constants ────────────────────────────────────────────────────────────
+const ALL_DAYS = ["Dimanche","Lundi","Mardi","Mercredi","Jeudi","Vendredi","Samedi"];
+const OFF_DAYS  = ["Dimanche","Lundi"];
+const END_TIMES = {Mardi:"18:00",Mercredi:"18:00",Jeudi:"20:00",Vendredi:"20:00",Samedi:"17:00",Dimanche:"",Lundi:""};
+const WORK_START = "09:45";
+const MORNING_TPL = [
+  {id:"m1",label:"Étirements",dur:10},
+  {id:"m2",label:"Méditation",dur:10},
+  {id:"m3",label:"Entraînement",dur:20},
+  {id:"m4",label:"Douche",dur:10},
+  {id:"m5",label:"Préparation",dur:35},
+  {id:"m6",label:"Trajet vers le travail",dur:45},
+];
+const OFF_MORNING_TPL = MORNING_TPL.slice(0,5);
+const MORNING_TOTAL   = MORNING_TPL.reduce((s,r)=>s+r.dur,0);
+const OFF_TOTAL       = OFF_MORNING_TPL.reduce((s,r)=>s+r.dur,0);
+const OPENING_TPL = [
+  {id:"o1",label:"Vérifier le showroom",dur:10},
+  {id:"o2",label:"Écrire les rendez-vous du jour",dur:10},
+  {id:"o3",label:"Voir les priorités avec Boris",dur:15},
+  {id:"o4",label:"Vérifier les emails",dur:15},
+  {id:"o5",label:"Vérifier les messages",dur:10},
+];
+const NETWORK_DAYS = ["Jeudi","Vendredi"];
+const TYPE_COLORS  = {opening:"#1a6b5c",work:"#1a3a5c",network:"#4a1a6b",break:"#2d6b3a",closing:"#6b1a1a",priorities:"#8b6914",offblock:"#2a3a4a"};
+const P_COLOR      = {high:"#e74c3c",medium:"#e67e22",low:"#27ae60"};
+const TABS         = ["🌅 Journée","📋 Routine","✅ Tâches","📝 Clôture"];
+const STORE_KEY    = "mdm_planner_v15";
+
+// ─── Helpers ──────────────────────────────────────────────────────────────
+const toMins   = t => { const [h,m]=t.split(":").map(Number); return h*60+m; };
+const fromMins = m => `${String(Math.floor(m/60)).padStart(2,"0")}:${String(m%60).padStart(2,"0")}`;
+const dateKey  = d => { const x=new Date(d); x.setHours(0,0,0,0); return x.toISOString().slice(0,10); };
+const dayName  = d => ALL_DAYS[new Date(d).getDay()];
+const fmtDay   = d => { const x=new Date(d); return `${String(x.getDate()).padStart(2,"0")}/${String(x.getMonth()+1).padStart(2,"0")}`; };
+const getMonday= d => { const x=new Date(d); x.setHours(0,0,0,0); const day=x.getDay(); x.setDate(x.getDate()-((day===0?7:day)-1)); return x; };
+const weekOf   = monday => Array.from({length:7},(_,i)=>{ const d=new Date(monday); d.setDate(d.getDate()+i); return d; });
+const fmtCAD   = v => (parseFloat(v)||0).toLocaleString("fr-CA",{style:"currency",currency:"CAD"});
+
+// ─── Schedule builders ─────────────────────────────────────────────────────
+function buildWork(dl) {
+  let c = toMins(WORK_START);
+  const end = toMins(END_TIMES[dl]);
+  const B = [];
+  const od = OPENING_TPL.reduce((s,t)=>s+t.dur,0);
+  B.push({id:"opening",type:"opening",label:"Ouverture de journée",start:c,end:c+od,dur:od,tasks:OPENING_TPL.map(t=>({...t,done:false})),status:"pending"}); c+=od;
+  B.push({id:"priorities",type:"priorities",label:"Top 3 Priorités",start:c,end:c+60,dur:60,tasks:[],status:"pending"}); c+=60;
+  B.push({id:"work1",type:"work",label:"Bloc de travail — Matin",start:c,end:c+90,dur:90,tasks:[{id:"w1a",label:"Suivis clients",dur:45,done:false},{id:"w1b",label:"Tâches administratives",dur:45,done:false}],status:"pending"}); c+=90;
+  B.push({id:"lunch",type:"break",label:"Pause déjeuner",start:c,end:c+45,dur:45,tasks:[],status:"pending"}); c+=45;
+  B.push({id:"work2",type:"work",label:"Bloc de travail — Après-midi",start:c,end:c+90,dur:90,tasks:[{id:"w2a",label:"Emails & messages",dur:30,done:false},{id:"w2b",label:"Rendez-vous / consultations",dur:60,done:false}],status:"pending"}); c+=90;
+  if (NETWORK_DAYS.includes(dl)) {
+    B.push({id:"network",type:"network",label:"🚀 Réseautage & Développement",start:c,end:c+90,dur:90,tasks:[{id:"n1",label:"Réseautage B2B",dur:30,done:false},{id:"n2",label:"Développement de marque",dur:30,done:false},{id:"n3",label:"Relations d'affaires",dur:30,done:false}],status:"pending"}); c+=90;
+  }
+  const cs = end-30;
+  if (c<cs) { B.push({id:"buffer",type:"work",label:"Bloc flexible / imprévus",start:c,end:cs,dur:cs-c,tasks:[{id:"b1",label:"Tâches secondaires",dur:cs-c,done:false}],status:"pending"}); }
+  B.push({id:"closing",type:"closing",label:"Clôture de journée",start:cs,end,dur:30,tasks:[],status:"pending"});
+  return B;
+}
+function buildOff() {
+  return [{id:"offblock",type:"offblock",label:"Bloc suivi (au besoin)",start:null,end:null,dur:null,
+    tasks:[{id:"f1",label:"",dur:0,done:false},{id:"f2",label:"",dur:0,done:false},{id:"f3",label:"",dur:0,done:false}],status:"pending"}];
+}
+function freshDay(dateObj) {
+  const dl = dayName(dateObj);
+  const off = OFF_DAYS.includes(dl);
+  return {
+    routine:   (off ? OFF_MORNING_TPL : MORNING_TPL).map(r=>({...r,done:false})),
+    blocks:    off ? buildOff() : buildWork(dl),
+    priorities:[{id:1,title:"",cat:"",level:"high",time:"30"},{id:2,title:"",cat:"",level:"medium",time:"30"},{id:3,title:"",cat:"",level:"low",time:"30"}],
+    recap:     {vente:"",tip:"",pending:"",followups:"",highlights:"",tomorrow:""},
+  };
+}
+
+// ─── Persistent storage ────────────────────────────────────────────────────
+async function stLoad() {
+  try { const r = await window.storage.get(STORE_KEY); return r ? JSON.parse(r.value) : {}; }
+  catch { return {}; }
+}
+async function stSave(data) {
+  try { await window.storage.set(STORE_KEY, JSON.stringify(data)); }
+  catch(e) { console.warn("storage save failed", e); }
+}
+
+// ─── PriorityEditor (stable — defined outside App) ─────────────────────────
+const PL = {high:"🔴 Urgent", medium:"🟠 Important", low:"🟢 Normal"};
+function PriorityEditor({ priorities, onChange }) {
+  return (
+    <div style={{paddingTop:8}}>
+      {priorities.map((p,pi) => (
+        <div key={p.id} style={{marginBottom:12,background:"#0f1117",borderRadius:10,padding:12,border:`1px solid ${P_COLOR[p.level]}55`}}>
+          <div style={{fontSize:10,color:P_COLOR[p.level],fontWeight:700,marginBottom:8,letterSpacing:1}}>PRIORITÉ {pi+1}</div>
+          <div style={{fontSize:11,color:"#666",marginBottom:4}}>Titre</div>
+          <input value={p.title} onChange={e=>onChange(p.id,"title",e.target.value)} placeholder="Ex: Appeler client Tremblay..."
+            style={{width:"100%",background:"#1e1e30",border:"1px solid #3a3a5e",borderRadius:8,color:"#e8e8e8",fontSize:16,padding:"10px 12px",outline:"none",boxSizing:"border-box",marginBottom:10}}/>
+          <div style={{display:"flex",gap:8,marginBottom:10}}>
+            <div style={{flex:1}}>
+              <div style={{fontSize:11,color:"#666",marginBottom:4}}>Catégorie</div>
+              <input value={p.cat} onChange={e=>onChange(p.id,"cat",e.target.value)} placeholder="Ex: Middlemen, RDV..."
+                style={{width:"100%",background:"#1e1e30",border:"1px solid #3a3a5e",borderRadius:8,color:"#e8e8e8",fontSize:16,padding:"10px 12px",outline:"none",boxSizing:"border-box"}}/>
+            </div>
+            <div>
+              <div style={{fontSize:11,color:"#666",marginBottom:4}}>Durée</div>
+              <div style={{display:"flex",alignItems:"center",background:"#1e1e30",border:"1px solid #3a3a5e",borderRadius:8,overflow:"hidden",height:44}}>
+                <button onClick={()=>onChange(p.id,"time",String(Math.max(5,Number(p.time)-5)))} style={{background:"none",border:"none",color:"#a78bfa",fontSize:20,padding:"0 10px",cursor:"pointer"}}>−</button>
+                <span style={{fontSize:13,color:"#e8e8e8",minWidth:38,textAlign:"center"}}>{p.time}m</span>
+                <button onClick={()=>onChange(p.id,"time",String(Number(p.time)+5))} style={{background:"none",border:"none",color:"#a78bfa",fontSize:20,padding:"0 10px",cursor:"pointer"}}>+</button>
+              </div>
+            </div>
+          </div>
+          <div style={{display:"flex",gap:6}}>
+            {["high","medium","low"].map(lv=>(
+              <button key={lv} onClick={()=>onChange(p.id,"level",lv)}
+                style={{flex:1,padding:"8px 4px",borderRadius:7,border:`1px solid ${p.level===lv?P_COLOR[lv]:"#2a2a4e"}`,background:p.level===lv?P_COLOR[lv]+"44":"transparent",color:p.level===lv?P_COLOR[lv]:"#555",fontSize:11,cursor:"pointer",fontWeight:p.level===lv?700:400}}>
+                {PL[lv]}
+              </button>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─── App ──────────────────────────────────────────────────────────────────
+export default function App() {
+  const todayObj = new Date(); todayObj.setHours(0,0,0,0);
+
+  const [allData,    setAllData]    = useState({});
+  const [ready,      setReady]      = useState(false);
+  const [selDate,    setSelDate]    = useState(new Date(todayObj));
+  const [weekMon,    setWeekMon]    = useState(()=>getMonday(todayObj));
+  const [activeBlk,  setActiveBlk]  = useState(null);
+  const [tab,        setTab]        = useState(0);
+  const [now,        setNow]        = useState(new Date());
+  const [copyOk,     setCopyOk]     = useState(false);
+  const allDataRef = useRef(allData);
+
+  // Keep ref in sync so save always has latest data
+  useEffect(()=>{ allDataRef.current = allData; },[allData]);
+
+  // Load once on mount
+  useEffect(()=>{
+    stLoad().then(d=>{ setAllData(d); setReady(true); });
+  },[]);
+
+  // Save immediately whenever allData changes (after initial load)
+  useEffect(()=>{
+    if (!ready) return;
+    stSave(allData);
+  },[allData, ready]);
+
+  // Also save on page hide (mobile background / close)
+  useEffect(()=>{
+    const save = () => stSave(allDataRef.current);
+    window.addEventListener("pagehide", save);
+    window.addEventListener("visibilitychange", ()=>{ if(document.visibilityState==="hidden") save(); });
+    return ()=>{ window.removeEventListener("pagehide", save); };
+  },[]);
+
+  useEffect(()=>{ const t=setInterval(()=>setNow(new Date()),30000); return()=>clearInterval(t); },[]);
+
+  const dk = dateKey(selDate);
+  const dl = dayName(selDate);
+  const isOff   = OFF_DAYS.includes(dl);
+  const isToday = dateKey(todayObj)===dk;
+
+  // Always read fresh day data
+  const day = allData[dk] || freshDay(selDate);
+  const { routine, blocks, priorities, recap } = day;
+
+  // Single updater — saves immediately via useEffect above
+  const update = useCallback((fn)=>{
+    setAllData(prev=>{
+      const cur = prev[dk] || freshDay(selDate);
+      const next = fn(cur);
+      return { ...prev, [dk]: next };
+    });
+  },[dk, selDate]);
+
+  // Stable priority handler
+  const onPrio = useCallback((id,field,val)=>{
+    update(d=>({ ...d, priorities: d.priorities.map(p=>p.id===id ? {...p,[field]:val} : p) }));
+  },[update]);
+
+  // Week nav
+  const prevWeek = ()=>setWeekMon(m=>{ const d=new Date(m); d.setDate(d.getDate()-7); return d; });
+  const nextWeek = ()=>setWeekMon(m=>{ const d=new Date(m); d.setDate(d.getDate()+7); return d; });
+  const wDates = weekOf(weekMon);
+
+  // Progress
+  const rDone  = routine.filter(r=>r.done).length;
+  const bDone  = blocks.filter(b=>b.status==="done").length;
+  const prog   = Math.round(((rDone/routine.length)*0.2 + (blocks.length ? (bDone/blocks.length)*0.8 : 0))*100);
+  const nowM   = now.getHours()*60+now.getMinutes();
+  const curIdx = isOff ? -1 : blocks.findIndex(b=>b.start!=null && nowM>=b.start && nowM<b.end);
+  const rStart = isOff ? fromMins(8*60) : fromMins(toMins(WORK_START)-MORNING_TOTAL);
+
+  // Actions
+  const toggleRoutine = id => update(d=>({ ...d, routine: d.routine.map(r=>r.id===id?{...r,done:!r.done}:r) }));
+  const toggleTask = (bId,tId) => update(d=>({
+    ...d, blocks: d.blocks.map(b=>{
+      if (b.id!==bId) return b;
+      const tasks = b.tasks.map(t=>t.id===tId?{...t,done:!t.done}:t);
+      return { ...b, tasks, status: tasks.every(t=>t.done)?"done":tasks.some(t=>t.done)?"active":"pending" };
+    })
+  }));
+  const setBlkStatus = (id,status) => update(d=>({ ...d, blocks: d.blocks.map(b=>b.id===id?{...b,status}:b) }));
+  const setTaskLabel = (bId,tId,label) => update(d=>({ ...d, blocks: d.blocks.map(b=>b.id===bId?{...b,tasks:b.tasks.map(t=>t.id===tId?{...t,label}:t)}:b) }));
+  const addOffTask   = () => update(d=>({ ...d, blocks: d.blocks.map(b=>b.id==="offblock"?{...b,tasks:[...b.tasks,{id:`f${Date.now()}`,label:"",dur:0,done:false}]}:b) }));
+  const setRecap     = (field,val) => update(d=>({ ...d, recap:{...d.recap,[field]:val} }));
+
+  // Sales cumuls
+  const y=selDate.getFullYear(), mo=selDate.getMonth();
+  let mV=0,mT=0,yV=0,yT=0;
+  Object.entries(allData).forEach(([k,v])=>{
+    const d=new Date(k); const dv=parseFloat(v.recap?.vente||0)||0; const dt=parseFloat(v.recap?.tip||0)||0;
+    if (d.getFullYear()===y) { yV+=dv; yT+=dt; if (d.getMonth()===mo){mV+=dv;mT+=dt;} }
+  });
+  const mName = selDate.toLocaleDateString("fr-CA",{month:"long",year:"numeric"});
+
+  const recapFields = [
+    {key:"pending",   emoji:"⏳", label:"En attente"},
+    {key:"followups", emoji:"🔁", label:"Suivis"},
+    {key:"highlights",emoji:"💡", label:"Points importants"},
+    {key:"tomorrow",  emoji:"🎯", label:"Demain"},
+  ];
+  const waMsg = [
+    `📋 *Récap du ${dl} ${selDate.toLocaleDateString("fr-CA")}*`, "",
+    recap.vente ? `💰 *Vente brute :* ${fmtCAD(recap.vente)}` : null,
+    recap.tip   ? `🎁 *Pourboires :* ${fmtCAD(recap.tip)}`   : null,
+    ...recapFields.filter(f=>recap[f.key]?.trim()).map(f=>`${f.emoji} *${f.label} :*\n${recap[f.key].trim()}`)
+  ].filter(Boolean).join("\n\n");
+
+  const doCopy = () => {
+    const fallback = () => {
+      const ta = document.createElement("textarea");
+      ta.value = waMsg; ta.style.cssText="position:fixed;opacity:0;top:0;left:0;";
+      document.body.appendChild(ta); ta.focus(); ta.select();
+      try { document.execCommand("copy"); setCopyOk(true); setTimeout(()=>setCopyOk(false),2500); }
+      catch { alert("Appuie longuement sur l'aperçu pour copier manuellement."); }
+      document.body.removeChild(ta);
+    };
+    if (navigator.clipboard?.writeText) { navigator.clipboard.writeText(waMsg).then(()=>{setCopyOk(true);setTimeout(()=>setCopyOk(false),2500);}).catch(fallback); }
+    else fallback();
+  };
+
+  const IS = { width:"100%",background:"#1e1e30",border:"1px solid #3a3a5e",borderRadius:8,color:"#e8e8e8",fontSize:16,padding:"10px 12px",outline:"none",boxSizing:"border-box",fontFamily:"inherit" };
+
+  // ── Loading screen ───────────────────────────────────────────────────────
+  if (!ready) return (
+    <div style={{minHeight:"100vh",background:"#0f1117",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:16}}>
+      <div style={{width:44,height:44,border:"3px solid #7c3aed",borderTopColor:"transparent",borderRadius:"50%",animation:"spin 1s linear infinite"}}/>
+      <div style={{color:"#888",fontSize:13}}>Chargement des données…</div>
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+    </div>
+  );
+
+  // ── Render ───────────────────────────────────────────────────────────────
+  return (
+    <div style={{minHeight:"100vh",background:"#0f1117",color:"#e8e8e8",fontFamily:"'Segoe UI',sans-serif",maxWidth:480,margin:"0 auto",paddingBottom:90}}>
+
+      {/* ── Header ── */}
+      <div style={{background:"linear-gradient(135deg,#1a1a2e,#16213e)",padding:"14px 14px 10px",borderBottom:"1px solid #2a2a3e"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
+          <div>
+            <div style={{fontSize:10,color:"#888",letterSpacing:2,textTransform:"uppercase"}}>Middlemen Canada</div>
+            <div style={{fontSize:15,fontWeight:700,color:"#fff"}}>{dl} {selDate.toLocaleDateString("fr-CA",{day:"numeric",month:"long",year:"numeric"})}</div>
+            {isOff   && <div style={{fontSize:11,color:"#6ab04c"}}>🌿 Journée congé</div>}
+            {isToday && <span style={{fontSize:10,background:"#7c3aed",color:"#fff",padding:"1px 7px",borderRadius:4,fontWeight:700}}>AUJOURD'HUI</span>}
+          </div>
+          <div style={{textAlign:"right"}}>
+            <div style={{fontSize:20,fontWeight:700,color:"#a78bfa"}}>{now.toLocaleTimeString("fr-CA",{hour:"2-digit",minute:"2-digit"})}</div>
+            {!isOff && <div style={{fontSize:11,color:"#888"}}>Fin : {END_TIMES[dl]}</div>}
+          </div>
+        </div>
+
+        {/* Week nav */}
+        <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8}}>
+          <button onClick={prevWeek} style={{background:"#1e1e30",border:"1px solid #2a2a4e",borderRadius:7,color:"#a78bfa",fontSize:18,padding:"3px 12px",cursor:"pointer",lineHeight:1}}>‹</button>
+          <div style={{flex:1,textAlign:"center",fontSize:11,color:"#888",fontWeight:600}}>{fmtDay(weekMon)} – {fmtDay(wDates[6])}</div>
+          <button onClick={nextWeek} style={{background:"#1e1e30",border:"1px solid #2a2a4e",borderRadius:7,color:"#a78bfa",fontSize:18,padding:"3px 12px",cursor:"pointer",lineHeight:1}}>›</button>
+        </div>
+
+        {/* Day pills */}
+        <div style={{display:"flex",gap:3,marginBottom:8}}>
+          {wDates.map((d,i)=>{
+            const dn=dayName(d), off2=OFF_DAYS.includes(dn);
+            const sel=dateKey(d)===dk, tod=dateKey(d)===dateKey(todayObj);
+            return (
+              <button key={i} onClick={()=>{ setSelDate(new Date(d)); setActiveBlk(null); setTab(0); }}
+                style={{flex:1,padding:"5px 1px",borderRadius:8,border:`1px solid ${sel?"#7c3aed":tod?"#4a3a6a":"#1e1e30"}`,background:sel?"#7c3aed":tod?"#1a1a2e":"#141420",color:sel?"#fff":tod?"#a78bfa":"#666",fontSize:9,cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:1}}>
+                <span style={{fontWeight:sel?700:400}}>{dn.slice(0,3)}</span>
+                <span style={{fontSize:9}}>{fmtDay(d)}</span>
+                {off2 && <span style={{fontSize:8,color:sel?"#ddd":"#6ab04c"}}>congé</span>}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Progress bar */}
+        <div style={{background:"#1e1e30",borderRadius:6,height:5,overflow:"hidden"}}>
+          <div style={{width:`${prog}%`,height:"100%",background:"linear-gradient(90deg,#7c3aed,#a78bfa)",transition:"width .5s"}}/>
+        </div>
+        <div style={{display:"flex",justifyContent:"space-between",marginTop:3,fontSize:10,color:"#666"}}>
+          <span>Progression : {prog}%</span>
+          <span>Routine {rDone}/{routine.length} · Blocs {bDone}/{blocks.length}</span>
+        </div>
+      </div>
+
+      {/* ── Tabs ── */}
+      <div style={{display:"flex",background:"#0f1117",borderBottom:"1px solid #1e1e30",position:"sticky",top:0,zIndex:10}}>
+        {TABS.map((t,i)=>(
+          <button key={i} onClick={()=>setTab(i)}
+            style={{flex:1,padding:"10px 2px",border:"none",background:"transparent",color:tab===i?"#a78bfa":"#555",fontSize:10,fontWeight:tab===i?700:400,cursor:"pointer",borderBottom:tab===i?"2px solid #7c3aed":"2px solid transparent"}}>
+            {t}
+          </button>
+        ))}
+      </div>
+
+      <div style={{padding:"12px"}}>
+
+        {/* ══ TAB 0 — Journée ══ */}
+        {tab===0 && (
+          <div>
+            {/* Routine start card */}
+            <div style={{background:"linear-gradient(135deg,#1a2a1a,#1e3a1e)",border:"1px solid #2d4a2d",borderRadius:12,padding:"12px 14px",marginBottom:12,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div>
+                <div style={{fontSize:10,color:"#6ab04c",letterSpacing:2,textTransform:"uppercase"}}>{isOff?"Début routine":"Commencer la routine"}</div>
+                <div style={{fontSize:26,fontWeight:700,color:"#6ab04c"}}>{rStart}</div>
+                <div style={{fontSize:11,color:"#888"}}>{isOff?`Durée : ${OFF_TOTAL} min`:`Arrivée à ${WORK_START}`}</div>
+              </div>
+              <div style={{textAlign:"right"}}>
+                <div style={{fontSize:10,color:"#888"}}>Durée</div>
+                <div style={{fontSize:18,fontWeight:600,color:"#fff"}}>{isOff?OFF_TOTAL:MORNING_TOTAL} min</div>
+              </div>
+            </div>
+
+            {/* Current block banner */}
+            {curIdx>=0 && (
+              <div style={{background:"linear-gradient(135deg,#3d1a7a,#1a3d7a)",border:"1px solid #7c3aed",borderRadius:12,padding:"12px 14px",marginBottom:12}}>
+                <div style={{fontSize:10,color:"#a78bfa",letterSpacing:2,textTransform:"uppercase",marginBottom:2}}>⚡ En ce moment</div>
+                <div style={{fontSize:15,fontWeight:700}}>{blocks[curIdx].label}</div>
+                <div style={{fontSize:11,color:"#888"}}>{fromMins(blocks[curIdx].start)} → {fromMins(blocks[curIdx].end)}</div>
+              </div>
+            )}
+
+            {/* Off-day priorities shown directly */}
+            {isOff && (
+              <div style={{background:"#141420",border:"1px solid #2a2a4e",borderRadius:12,padding:14,marginBottom:12}}>
+                <div style={{fontSize:12,color:"#a78bfa",fontWeight:700,marginBottom:4}}>🎯 Top 3 Priorités du jour</div>
+                <PriorityEditor priorities={priorities} onChange={onPrio}/>
+              </div>
+            )}
+
+            {/* Blocks */}
+            {blocks.map((b,i)=>(
+              <div key={b.id} style={{marginBottom:10,borderRadius:12,border:`1px solid ${i===curIdx?"#7c3aed":"#1e1e30"}`,background:i===curIdx?"#1a1a2e":"#141420",overflow:"hidden"}}>
+                <div onClick={()=>setActiveBlk(activeBlk===b.id?null:b.id)}
+                  style={{padding:"11px 14px",cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <div style={{display:"flex",alignItems:"center",gap:10}}>
+                    <div style={{width:4,height:32,borderRadius:2,background:TYPE_COLORS[b.type]||"#555"}}/>
+                    <div>
+                      <div style={{fontSize:13,fontWeight:600,color:b.status==="done"?"#555":"#e8e8e8",textDecoration:b.status==="done"?"line-through":"none"}}>{b.label}</div>
+                      <div style={{fontSize:11,color:"#666"}}>{b.start!=null?`${fromMins(b.start)} – ${fromMins(b.end)} · ${b.dur} min`:""}</div>
+                    </div>
+                  </div>
+                  <div style={{display:"flex",gap:5,alignItems:"center"}}>
+                    {b.type==="network" && <span style={{fontSize:8,background:"#4a1a6b",color:"#c084fc",padding:"2px 5px",borderRadius:4,fontWeight:700}}>STRAT.</span>}
+                    <div style={{width:8,height:8,borderRadius:"50%",background:b.status==="done"?"#6ab04c":b.status==="active"?"#e67e22":"#333"}}/>
+                    <span style={{fontSize:12,color:"#555"}}>{activeBlk===b.id?"▲":"▼"}</span>
+                  </div>
+                </div>
+
+                {activeBlk===b.id && (
+                  <div style={{padding:"0 14px 14px",borderTop:"1px solid #1e1e30"}}>
+
+                    {b.type==="priorities" && <PriorityEditor priorities={priorities} onChange={onPrio}/>}
+
+                    {b.type==="closing" && (
+                      <div style={{paddingTop:10}}>
+                        <div style={{fontSize:11,color:"#a78bfa",marginBottom:8}}>📤 Prépare ton récap dans l'onglet Clôture</div>
+                        <button onClick={()=>setTab(3)} style={{background:"#7c3aed",color:"#fff",border:"none",borderRadius:8,padding:"8px 16px",fontSize:12,cursor:"pointer",fontWeight:600}}>Aller à la clôture →</button>
+                      </div>
+                    )}
+
+                    {b.type==="offblock" && (
+                      <div style={{paddingTop:8}}>
+                        {b.tasks.map((t,ti)=>(
+                          <div key={t.id} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 0",borderBottom:"1px solid #1e1e30"}}>
+                            <div onClick={()=>toggleTask(b.id,t.id)}
+                              style={{width:20,height:20,borderRadius:5,border:`2px solid ${t.done?"#6ab04c":"#333"}`,background:t.done?"#6ab04c":"transparent",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,cursor:"pointer"}}>
+                              {t.done && <span style={{fontSize:11,color:"#fff"}}>✓</span>}
+                            </div>
+                            <input value={t.label} onChange={e=>setTaskLabel(b.id,t.id,e.target.value)} placeholder={`Suivi ${ti+1}...`}
+                              style={{...IS,marginBottom:0}}/>
+                          </div>
+                        ))}
+                        <button onClick={addOffTask} style={{marginTop:8,background:"transparent",border:"1px dashed #2a2a4e",borderRadius:6,color:"#888",fontSize:12,padding:"7px",cursor:"pointer",width:"100%"}}>+ Ajouter un suivi</button>
+                      </div>
+                    )}
+
+                    {!["priorities","closing","offblock"].includes(b.type) && (
+                      <div style={{paddingTop:8}}>
+                        {b.tasks.map(t=>(
+                          <div key={t.id} onClick={()=>toggleTask(b.id,t.id)}
+                            style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderBottom:"1px solid #1e1e30",cursor:"pointer"}}>
+                            <div style={{width:20,height:20,borderRadius:5,border:`2px solid ${t.done?"#6ab04c":"#333"}`,background:t.done?"#6ab04c":"transparent",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                              {t.done && <span style={{fontSize:11,color:"#fff"}}>✓</span>}
+                            </div>
+                            <span style={{flex:1,fontSize:14,color:t.done?"#555":"#ccc",textDecoration:t.done?"line-through":"none"}}>{t.label}</span>
+                            <span style={{fontSize:11,color:"#555"}}>{t.dur?`${t.dur}m`:""}</span>
+                          </div>
+                        ))}
+                        <div style={{display:"flex",gap:6,marginTop:10}}>
+                          <button onClick={e=>{e.stopPropagation();setBlkStatus(b.id,"active");setActiveBlk(null);}}
+                            style={{flex:1,padding:"10px",background:"#1a3d7a",color:"#60a5fa",border:"1px solid #1e4a8a",borderRadius:7,fontSize:13,cursor:"pointer",fontWeight:700}}>▶ Démarrer</button>
+                          <button onClick={e=>{e.stopPropagation();setBlkStatus(b.id,"done");setActiveBlk(null);}}
+                            style={{flex:1,padding:"10px",background:"#1a4a1a",color:"#6ab04c",border:"1px solid #2d6b2d",borderRadius:7,fontSize:13,cursor:"pointer",fontWeight:700}}>✓ Terminé</button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* ══ TAB 1 — Routine ══ */}
+        {tab===1 && (
+          <div>
+            <div style={{background:"#141420",borderRadius:12,border:"1px solid #1e1e30",padding:14,marginBottom:14}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+                <div>
+                  <div style={{fontSize:11,color:"#888"}}>Heure de départ</div>
+                  <div style={{fontSize:30,fontWeight:700,color:"#6ab04c"}}>{rStart}</div>
+                </div>
+                <div style={{textAlign:"right"}}>
+                  <div style={{fontSize:11,color:"#888"}}>{isOff?"Journée":"Arrivée"}</div>
+                  <div style={{fontSize:20,fontWeight:700,color:"#fff"}}>{isOff?"🌿":WORK_START}</div>
+                </div>
+              </div>
+              <div style={{background:"#0f1117",borderRadius:8,height:7,overflow:"hidden"}}>
+                <div style={{width:`${(rDone/routine.length)*100}%`,height:"100%",background:"linear-gradient(90deg,#6ab04c,#a8e063)",transition:"width .4s"}}/>
+              </div>
+              <div style={{fontSize:11,color:"#888",marginTop:4}}>{rDone}/{routine.length} étapes complétées</div>
+            </div>
+            {routine.map((r,i)=>{
+              const sm = toMins(rStart)+routine.slice(0,i).reduce((s,x)=>s+x.dur,0);
+              return (
+                <div key={r.id} onClick={()=>toggleRoutine(r.id)}
+                  style={{display:"flex",alignItems:"center",gap:12,padding:"12px 14px",marginBottom:8,borderRadius:10,border:`1px solid ${r.done?"#2d4a2d":"#1e1e30"}`,background:r.done?"#141e14":"#141420",cursor:"pointer"}}>
+                  <div style={{width:22,height:22,borderRadius:6,border:`2px solid ${r.done?"#6ab04c":"#333"}`,background:r.done?"#6ab04c":"transparent",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                    {r.done && <span style={{fontSize:12,color:"#fff"}}>✓</span>}
+                  </div>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:14,fontWeight:600,color:r.done?"#555":"#e8e8e8",textDecoration:r.done?"line-through":"none"}}>{r.label}</div>
+                    <div style={{fontSize:11,color:"#666"}}>{fromMins(sm)} → {fromMins(sm+r.dur)}</div>
+                  </div>
+                  <div style={{fontSize:12,color:"#888",fontWeight:600}}>{r.dur} min</div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* ══ TAB 2 — Tâches ══ */}
+        {tab===2 && (
+          <div>
+            <div style={{background:"#141420",borderRadius:12,border:"1px solid #1e1e30",padding:14,marginBottom:14}}>
+              <div style={{fontSize:12,color:"#a78bfa",fontWeight:700,letterSpacing:1,textTransform:"uppercase",marginBottom:10}}>🎯 Top 3 Priorités</div>
+              {priorities.map((p,i)=>(
+                <div key={p.id} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 0",borderBottom:i<2?"1px solid #1e1e30":"none"}}>
+                  <div style={{width:24,height:24,borderRadius:"50%",background:P_COLOR[p.level],display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700,color:"#fff",flexShrink:0}}>{i+1}</div>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:13,fontWeight:600,color:p.title?"#e8e8e8":"#444"}}>{p.title||`Priorité ${i+1} non définie`}</div>
+                    {(p.cat||p.time) && <div style={{fontSize:11,color:"#888"}}>{p.cat}{p.time?` · ${p.time} min`:""}</div>}
+                  </div>
+                  <span style={{fontSize:10,background:P_COLOR[p.level]+"22",color:P_COLOR[p.level],padding:"2px 6px",borderRadius:4,fontWeight:700}}>
+                    {p.level==="high"?"URGENT":p.level==="medium"?"IMPORT.":"NORMAL"}
+                  </span>
+                </div>
+              ))}
+              <button onClick={()=>setTab(0)} style={{marginTop:10,width:"100%",padding:"8px",background:"#1a1a2e",color:"#a78bfa",border:"1px solid #2a2a4e",borderRadius:8,fontSize:12,cursor:"pointer"}}>
+                Modifier les priorités →
+              </button>
+            </div>
+            {blocks.filter(b=>b.tasks.length>0&&b.type!=="offblock").map(b=>(
+              <div key={b.id} style={{marginBottom:10,background:"#141420",borderRadius:12,border:"1px solid #1e1e30",overflow:"hidden"}}>
+                <div style={{padding:"10px 14px",background:"#0f1117",display:"flex",justifyContent:"space-between"}}>
+                  <div style={{fontSize:12,fontWeight:700,color:"#ccc"}}>{b.label}</div>
+                  <div style={{fontSize:11,color:"#666"}}>{b.tasks.filter(t=>t.done).length}/{b.tasks.length}</div>
+                </div>
+                {b.tasks.filter(t=>t.label).map(t=>(
+                  <div key={t.id} onClick={()=>toggleTask(b.id,t.id)}
+                    style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",borderBottom:"1px solid #0f1117",cursor:"pointer"}}>
+                    <div style={{width:18,height:18,borderRadius:5,border:`2px solid ${t.done?"#6ab04c":"#333"}`,background:t.done?"#6ab04c":"transparent",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                      {t.done && <span style={{fontSize:10,color:"#fff"}}>✓</span>}
+                    </div>
+                    <span style={{flex:1,fontSize:13,color:t.done?"#555":"#ccc",textDecoration:t.done?"line-through":"none"}}>{t.label}</span>
+                    <span style={{fontSize:11,color:"#555"}}>{t.dur?`${t.dur}m`:""}</span>
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* ══ TAB 3 — Clôture ══ */}
+        {tab===3 && (
+          <div>
+            <div style={{background:"linear-gradient(135deg,#1a1a2e,#2a1a1a)",border:"1px solid #4a1a1a",borderRadius:12,padding:14,marginBottom:14}}>
+              <div style={{fontSize:12,color:"#f87171",fontWeight:700,letterSpacing:1,textTransform:"uppercase",marginBottom:2}}>
+                📋 Clôture — {dl} {selDate.toLocaleDateString("fr-CA")}
+              </div>
+              <div style={{fontSize:11,color:"#6ab04c"}}>✅ Sauvegarde automatique activée</div>
+            </div>
+
+            {/* Sales inputs */}
+            <div style={{background:"#141420",border:"1px solid #2a2a4e",borderRadius:12,padding:14,marginBottom:14}}>
+              <div style={{fontSize:12,color:"#f59e0b",fontWeight:700,letterSpacing:1,textTransform:"uppercase",marginBottom:12}}>💰 Ventes du jour</div>
+              <div style={{display:"flex",gap:10,marginBottom:14}}>
+                <div style={{flex:1}}>
+                  <div style={{fontSize:11,color:"#888",marginBottom:5}}>Vente brute ($)</div>
+                  <div style={{display:"flex",alignItems:"center",background:"#0f1117",border:"1px solid #3a3a5e",borderRadius:8,overflow:"hidden"}}>
+                    <span style={{padding:"0 10px",color:"#f59e0b",fontSize:16,fontWeight:700}}>$</span>
+                    <input type="number" inputMode="decimal" min="0" step="0.01" value={recap.vente||""} onChange={e=>setRecap("vente",e.target.value)} placeholder="0.00"
+                      style={{flex:1,background:"transparent",border:"none",color:"#e8e8e8",fontSize:18,padding:"10px 8px",outline:"none",fontWeight:700}}/>
+                  </div>
+                </div>
+                <div style={{flex:1}}>
+                  <div style={{fontSize:11,color:"#888",marginBottom:5}}>Pourboires ($)</div>
+                  <div style={{display:"flex",alignItems:"center",background:"#0f1117",border:"1px solid #3a3a5e",borderRadius:8,overflow:"hidden"}}>
+                    <span style={{padding:"0 10px",color:"#a78bfa",fontSize:16,fontWeight:700}}>$</span>
+                    <input type="number" inputMode="decimal" min="0" step="0.01" value={recap.tip||""} onChange={e=>setRecap("tip",e.target.value)} placeholder="0.00"
+                      style={{flex:1,background:"transparent",border:"none",color:"#e8e8e8",fontSize:18,padding:"10px 8px",outline:"none",fontWeight:700}}/>
+                  </div>
+                </div>
+              </div>
+
+              {/* Cumuls */}
+              <div style={{fontSize:11,color:"#888",fontWeight:600,marginBottom:8,letterSpacing:1,textTransform:"uppercase"}}>Cumuls</div>
+              <div style={{display:"flex",gap:8,marginBottom:8}}>
+                <div style={{flex:1,background:"linear-gradient(135deg,#1a2a1a,#1e3a1e)",border:"1px solid #2d4a2d",borderRadius:10,padding:10}}>
+                  <div style={{fontSize:9,color:"#6ab04c",letterSpacing:1,textTransform:"uppercase",marginBottom:3}}>Ventes — {mName}</div>
+                  <div style={{fontSize:20,fontWeight:700,color:"#6ab04c"}}>{fmtCAD(mV)}</div>
+                </div>
+                <div style={{flex:1,background:"linear-gradient(135deg,#1a1a2e,#2a1a3e)",border:"1px solid #3a2a5e",borderRadius:10,padding:10}}>
+                  <div style={{fontSize:9,color:"#a78bfa",letterSpacing:1,textTransform:"uppercase",marginBottom:3}}>Pourboires — {mName}</div>
+                  <div style={{fontSize:20,fontWeight:700,color:"#a78bfa"}}>{fmtCAD(mT)}</div>
+                </div>
+              </div>
+              <div style={{background:"linear-gradient(135deg,#1a2a2a,#1e3a3a)",border:"1px solid #2d4a4a",borderRadius:10,padding:12}}>
+                <div style={{fontSize:9,color:"#60a5fa",letterSpacing:1,textTransform:"uppercase",marginBottom:8}}>Cumul annuel {y}</div>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <div><div style={{fontSize:10,color:"#888",marginBottom:2}}>Ventes</div><div style={{fontSize:15,fontWeight:700,color:"#60a5fa"}}>{fmtCAD(yV)}</div></div>
+                  <div style={{color:"#444",fontSize:18}}>+</div>
+                  <div><div style={{fontSize:10,color:"#888",marginBottom:2}}>Pourboires</div><div style={{fontSize:15,fontWeight:700,color:"#a78bfa"}}>{fmtCAD(yT)}</div></div>
+                  <div style={{color:"#444",fontSize:18}}>=</div>
+                  <div><div style={{fontSize:10,color:"#888",marginBottom:2}}>Total</div><div style={{fontSize:15,fontWeight:700,color:"#fff"}}>{fmtCAD(yV+yT)}</div></div>
+                </div>
+              </div>
+            </div>
+
+            {/* Notes */}
+            {recapFields.map(f=>(
+              <div key={f.key} style={{marginBottom:14}}>
+                <div style={{fontSize:13,fontWeight:600,color:"#a78bfa",marginBottom:6}}>{f.emoji} {f.label}</div>
+                <textarea value={recap[f.key]||""} onChange={e=>setRecap(f.key,e.target.value)} placeholder="Taper ici..." rows={3}
+                  style={{...IS,resize:"vertical",lineHeight:1.5}}/>
+                {!recap[f.key]?.trim() && <div style={{fontSize:10,color:"#555",marginTop:2}}>⚠️ Vide — ne sera pas inclus dans le WhatsApp</div>}
+              </div>
+            ))}
+
+            {/* WhatsApp preview */}
+            <div style={{background:"#0a0a12",borderRadius:10,padding:12,marginBottom:12,border:"1px solid #1e1e30"}}>
+              <div style={{fontSize:10,color:"#888",fontWeight:700,marginBottom:6,letterSpacing:1}}>APERÇU WHATSAPP</div>
+              <pre style={{fontSize:12,color:"#ccc",whiteSpace:"pre-wrap",fontFamily:"inherit",margin:0,lineHeight:1.6,userSelect:"text",WebkitUserSelect:"text"}}>{waMsg}</pre>
+            </div>
+            <button onClick={doCopy}
+              style={{width:"100%",padding:"14px",background:copyOk?"linear-gradient(135deg,#27ae60,#1e8449)":"linear-gradient(135deg,#25d366,#128c7e)",color:"#fff",border:"none",borderRadius:10,fontSize:14,fontWeight:700,cursor:"pointer"}}>
+              {copyOk?"✓ Copié !":"📱 Copier pour WhatsApp"}
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* ── Bottom bar ── */}
+      <div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:480,background:"#0f1117",borderTop:"1px solid #1e1e30",padding:"8px 14px",display:"flex",justifyContent:"space-between",alignItems:"center",boxSizing:"border-box"}}>
+        <button onClick={prevWeek} style={{background:"#1e1e30",border:"1px solid #2a2a4e",borderRadius:7,color:"#a78bfa",fontSize:14,padding:"6px 14px",cursor:"pointer",fontWeight:700}}>‹ Sem.</button>
+        <div style={{textAlign:"center"}}>
+          <div style={{fontSize:10,color:"#555"}}>{isOff?"🌿 Congé":END_TIMES[dl]?"Fin : "+END_TIMES[dl]:""}</div>
+          <div style={{fontSize:11,color:"#a78bfa",fontWeight:700}}>{prog}% complété</div>
+        </div>
+        <button onClick={nextWeek} style={{background:"#1e1e30",border:"1px solid #2a2a4e",borderRadius:7,color:"#a78bfa",fontSize:14,padding:"6px 14px",cursor:"pointer",fontWeight:700}}>Sem. ›</button>
+      </div>
+    </div>
+  );
+}
