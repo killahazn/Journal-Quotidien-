@@ -4,7 +4,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-<title>Planificateur Middlemen</title>
+<title>Planificateur Middlemen — v2</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
 body{background:#0f1117;color:#e8e8e8;font-family:'Segoe UI',sans-serif;max-width:480px;margin:0 auto;padding-bottom:80px;min-height:100vh;}
@@ -110,6 +110,8 @@ function saveDB(){
 function forceSave(){saveDB();}
 window.addEventListener("beforeunload",forceSave);
 document.addEventListener("visibilitychange",()=>{if(document.hidden)forceSave();});
+window.addEventListener("pagehide",forceSave);
+if(navigator.storage?.persist){navigator.storage.persist().catch(()=>{});} // aide à garder localStorage plus longtemps sur mobile
 
 // ─── Schedule builders ────────────────────────────────────────────────────
 function buildWork(dl){
@@ -199,9 +201,10 @@ function render(){
               <input class="ifield" value="${esc(p.cat)}" oninput="setPrio(${p.id},'cat',this.value)" placeholder="Ex: Middlemen..."></div>
               <div><div style="font-size:11px;color:#666;margin-bottom:4px;">Durée</div>
               <div style="display:flex;align-items:center;background:#1e1e30;border:1px solid #3a3a5e;border-radius:8px;overflow:hidden;height:44px;">
-                <button onclick="setPrio(${p.id},'time',String(Math.max(5,Number('${p.time}')-5)))" style="background:none;border:none;color:#a78bfa;font-size:20px;padding:0 10px;">−</button>
-                <span style="font-size:13px;color:#e8e8e8;min-width:38px;text-align:center;">${p.time}m</span>
-                <button onclick="setPrio(${p.id},'time',String(Number('${p.time}')+5))" style="background:none;border:none;color:#a78bfa;font-size:20px;padding:0 10px;">+</button>
+                <button onclick="setPrio(${p.id},'time',String(Math.max(5,Number('${p.time}')-5)),true)" style="background:none;border:none;color:#a78bfa;font-size:20px;padding:0 10px;">−</button>
+                <input type="text" inputmode="numeric" value="${esc(p.time||'')}" oninput="setPrio(${p.id},'time',this.value,false)" onblur="render()" style="width:44px;background:transparent;border:none;color:#e8e8e8;font-size:13px;text-align:center;outline:none;">
+                <span style="font-size:12px;color:#888;padding-right:2px;">m</span>
+                <button onclick="setPrio(${p.id},'time',String(Number('${p.time}')+5),true)" style="background:none;border:none;color:#a78bfa;font-size:20px;padding:0 10px;">+</button>
               </div></div>
             </div>
             <div style="display:flex;gap:6px;">
@@ -267,9 +270,10 @@ function render(){
             <div style="display:flex;gap:8px;margin-bottom:10px;">
               <input class="ifield" style="flex:1;" value="${esc(p.cat)}" oninput="setPrio(${p.id},'cat',this.value)" placeholder="Catégorie...">
               <div style="display:flex;align-items:center;background:#1e1e30;border:1px solid #3a3a5e;border-radius:8px;overflow:hidden;height:44px;">
-                <button onclick="setPrio(${p.id},'time',String(Math.max(5,Number('${p.time}')-5)))" style="background:none;border:none;color:#a78bfa;font-size:20px;padding:0 10px;">−</button>
-                <span style="font-size:13px;color:#e8e8e8;min-width:38px;text-align:center;">${p.time}m</span>
-                <button onclick="setPrio(${p.id},'time',String(Number('${p.time}')+5))" style="background:none;border:none;color:#a78bfa;font-size:20px;padding:0 10px;">+</button>
+                <button onclick="setPrio(${p.id},'time',String(Math.max(5,Number('${p.time}')-5)),true)" style="background:none;border:none;color:#a78bfa;font-size:20px;padding:0 10px;">−</button>
+                <input type="text" inputmode="numeric" value="${esc(p.time||'')}" oninput="setPrio(${p.id},'time',this.value,false)" onblur="render()" style="width:44px;background:transparent;border:none;color:#e8e8e8;font-size:13px;text-align:center;outline:none;">
+                <span style="font-size:12px;color:#888;padding-right:2px;">m</span>
+                <button onclick="setPrio(${p.id},'time',String(Number('${p.time}')+5),true)" style="background:none;border:none;color:#a78bfa;font-size:20px;padding:0 10px;">+</button>
               </div>
             </div>
             <div style="display:flex;gap:6px;">
@@ -371,13 +375,13 @@ function render(){
           <div style="flex:1;"><div style="font-size:11px;color:#888;margin-bottom:5px;">Vente brute ($)</div>
             <div style="display:flex;align-items:center;background:#0f1117;border:1px solid #3a3a5e;border-radius:8px;overflow:hidden;">
               <span style="padding:0 10px;color:#f59e0b;font-size:16px;font-weight:700;">$</span>
-              <input type="number" inputmode="decimal" value="${esc(recap.vente||"")}" oninput="setRecap('vente',this.value)" placeholder="0.00" style="flex:1;background:transparent;border:none;color:#e8e8e8;font-size:18px;padding:10px 8px;outline:none;font-weight:700;">
+              <input type="text" inputmode="decimal" value="${esc(recap.vente||"")}" oninput="setRecap('vente',this.value,false)" onblur="render()" placeholder="0.00" style="flex:1;background:transparent;border:none;color:#e8e8e8;font-size:18px;padding:10px 8px;outline:none;font-weight:700;">
             </div>
           </div>
           <div style="flex:1;"><div style="font-size:11px;color:#888;margin-bottom:5px;">Pourboires ($)</div>
             <div style="display:flex;align-items:center;background:#0f1117;border:1px solid #3a3a5e;border-radius:8px;overflow:hidden;">
               <span style="padding:0 10px;color:#a78bfa;font-size:16px;font-weight:700;">$</span>
-              <input type="number" inputmode="decimal" value="${esc(recap.tip||"")}" oninput="setRecap('tip',this.value)" placeholder="0.00" style="flex:1;background:transparent;border:none;color:#e8e8e8;font-size:18px;padding:10px 8px;outline:none;font-weight:700;">
+              <input type="text" inputmode="decimal" value="${esc(recap.tip||"")}" oninput="setRecap('tip',this.value,false)" onblur="render()" placeholder="0.00" style="flex:1;background:transparent;border:none;color:#e8e8e8;font-size:18px;padding:10px 8px;outline:none;font-weight:700;">
             </div>
           </div>
         </div>
@@ -556,17 +560,17 @@ function addOffTask(){
   day.blocks=day.blocks.map(b=>b.id==="offblock"?{...b,tasks:[...b.tasks,{id:"f"+Date.now(),label:"",dur:0,done:false}]}:b);
   saveDB();render();
 }
-function setPrio(id,field,val){
+function setPrio(id,field,val,rerender=false){
   const dk=dateKey(selDate);const day=getDay(dk,selDate);
   day.priorities=day.priorities.map(p=>p.id===id?{...p,[field]:val}:p);
   saveDB();
-  if(field==="level"||field==="time")render();
+  if(rerender===true||field==="level")render();
 }
-function setRecap(field,val){
+function setRecap(field,val,rerender=false){
   const dk=dateKey(selDate);const day=getDay(dk,selDate);
   day.recap={...day.recap,[field]:val};
   saveDB();
-  if(field==="vente"||field==="tip")render();
+  if(rerender===true)render();
 }
 function doCopy(){
   const btn=document.getElementById("copyBtn");
@@ -580,7 +584,10 @@ function doCopy(){
 // ─── Init ─────────────────────────────────────────────────────────────────
 loadDB();
 render();
-setInterval(render,60000);
+setInterval(()=>{
+  const a=document.activeElement;
+  if(!a || !['INPUT','TEXTAREA'].includes(a.tagName)) render();
+},60000);
 </script>
 </body>
 </html>
